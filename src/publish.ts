@@ -17,7 +17,7 @@ export async function publish(options: PublishOptions = {}) {
   const isDir = fs.lstatSync(options.filename!).isDirectory();
   if (isDir) {
     console.log("Packing directory...");
-    const packedFile = await pack({ root: options.filename });
+    const packedFile = await pack(options.filename);
     options.filename = packedFile;
   }
 

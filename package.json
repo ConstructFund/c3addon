@@ -1,6 +1,6 @@
 {
   "name": "c3addon",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Node and CLI tool to automate publishing your Addons to Construct Addons page",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
