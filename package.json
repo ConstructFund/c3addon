@@ -1,6 +1,6 @@
 {
   "name": "c3addon",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Node and CLI tool to automate publishing your Addons to Construct Addons page",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -16,7 +16,7 @@
     }
   },
   "bin": {
-    "c3addon-publish": "./dist/cli.cjs"
+    "c3addon": "./dist/cli.cjs"
   },
   "files": ["dist"],
   "scripts": {
@@ -26,7 +26,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/ConstructFund/c3addon-publish.git"
+    "url": "git+ssh://git@github.com/ConstructFund/c3addon.git"
   },
   "keywords": [
     "construct3",
@@ -37,9 +37,9 @@
   "author": "Endel Dreyer",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/ConstructFund/c3addon-publish/issues"
+    "url": "https://github.com/ConstructFund/c3addon/issues"
   },
-  "homepage": "https://github.com/ConstructFund/c3addon-publish#readme",
+  "homepage": "https://github.com/ConstructFund/c3addon#readme",
   "devDependencies": {
     "@types/node": "^22.12.0",
     "pkgroll": "^2.6.1",
