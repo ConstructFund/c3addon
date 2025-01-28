@@ -2,6 +2,8 @@
 
 This is a simple script to publish your `.c3addon` to the Construct Addon registry.
 
+See how to configure [GitHub Actions](https://github.com/endel/construct3-addon-release-github-actions/blob/main/.github/workflows/release.yml) to publish your addon automatically.
+
 ## CLI Usage
 
 ### Publishing a `.c3addon` file
