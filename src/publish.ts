@@ -33,7 +33,7 @@ export async function publish(options: PublishOptions = {}) {
   if (!password) throw new Error(`Please provide an auth password (received ${password})`);
 
   const browser = await puppeteer.launch({
-    headless: false,
+    headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
   });
   const page = await browser.newPage();
