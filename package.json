@@ -1,6 +1,6 @@
 {
   "name": "c3addon",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Node and CLI tool to automate publishing your Addons to Construct Addons page",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -20,7 +20,7 @@
   },
   "files": ["dist"],
   "scripts": {
-    "build": "pkgroll",
+    "build": "pkgroll --clean-dist",
     "test": "echo \"Error: no test specified\" && exit 1",
     "prepublishOnly": "npm run build"
   },
