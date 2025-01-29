@@ -17,7 +17,7 @@ export async function publish(options: PublishOptions = {}) {
   const isDir = fs.lstatSync(options.filename!).isDirectory();
   if (isDir) {
     console.log("Packing directory...");
-    const packedFile = await pack(options.filename);
+    const packedFile = await pack(options.filename!);
     options.filename = packedFile;
   }
 
@@ -33,7 +33,8 @@ export async function publish(options: PublishOptions = {}) {
   if (!password) throw new Error(`Please provide an auth password (received ${password})`);
 
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: false,
+    // headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
   });
   const page = await browser.newPage();
@@ -87,10 +88,24 @@ export async function publish(options: PublishOptions = {}) {
     await fileInput.uploadFile(filename);
     // submit the upload.
     console.info(`Uploading file ${filename}...`);
-    await Promise.all([
-      page.waitForNavigation(),
-      page.click('.ui-dialog .ui-dialog-buttonset button:last-child')
-    ]);
+
+    try {
+      await Promise.all([
+        page.waitForNavigation(),
+        page.click('.ui-dialog .ui-dialog-buttonset button:last-child')
+      ]);
+
+    } catch (e) {
+      // try to check for upload errors
+      const uploadError = await page.$eval("#AddonReleaseUploadFileControl_MessageLabel", el => el.textContent);
+      if (uploadError) {
+        console.error("Error:", uploadError.trim());
+        process.exit(1);
+      } else {
+        throw e;
+      }
+    }
+
   } else {
     throw new Error("failed to find file input");
   }
