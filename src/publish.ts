@@ -118,6 +118,9 @@ export async function publish(options: PublishOptions = {}) {
 
 
 export function parseAddonURL(url: string) {
+  // ensure addon URL ends with a slash.
+  if (!url.endsWith("/")) url += "/";
+
   const pattern = /\/([a-z]+)\/make-games\/addons\/([0-9]+)\/([^\s/]+)\//;
 
   const match = url.match(pattern);
