@@ -51,8 +51,6 @@ export async function publish(options: PublishOptions = {}) {
     page.click("#BtnLogin")
   ]);
 
-  await page.waitForNavigation();
-
   // try to check for auth errors.
   try {
     const authError = await page.$eval("#AuthErrorWrapper", el => el.textContent);
@@ -77,12 +75,16 @@ export async function publish(options: PublishOptions = {}) {
   }
 
   // create a new release.
-  await page.click('#BtnCreateRelease');
-  await page.waitForNavigation();
+  await Promise.all([
+    page.waitForNavigation(),
+    page.click('#BtnCreateRelease'),
+  ]);
 
   // upload the file.
   await page.click("#UploadReleaseButton");
-  const fileInput = await page.$("input[type=file]");
+
+  // the dialog holding the file input is only built on click.
+  const fileInput = await page.waitForSelector("input[type=file]").catch(() => null);
   if (fileInput) {
     await fileInput.uploadFile(filename);
     // submit the upload.
@@ -96,8 +98,8 @@ export async function publish(options: PublishOptions = {}) {
 
     } catch (e) {
       // try to check for upload errors
-      const uploadError = await page.$eval("#AddonReleaseUploadFileControl_MessageLabel", el => el.textContent);
-      if (uploadError) {
+      const uploadError = await page.$eval("#AddonReleaseUploadFileControl_MessageLabel", el => el.textContent).catch(() => null);
+      if (uploadError && uploadError.trim()) {
         console.error("Error:", uploadError.trim());
         process.exit(1);
       } else {
@@ -111,6 +113,7 @@ export async function publish(options: PublishOptions = {}) {
 
   // update the release notes.
   console.log("Updating release notes...");
+  await page.waitForSelector("#RichContent");
   await page.type("#RichContent", releaseNotes);
   await Promise.all([
     page.waitForNavigation(),
