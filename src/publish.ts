@@ -1,8 +1,8 @@
 import fs from "node:fs";
-import puppeteer from 'puppeteer';
 
 import { ask } from './utils';
 import { pack } from "./pack";
+import { openSession, parseAddonURL } from "./session";
 
 export interface PublishOptions {
   addonUrl?: string,
@@ -21,58 +21,12 @@ export async function publish(options: PublishOptions = {}) {
     options.filename = packedFile;
   }
 
-  const addonUrl = options.addonUrl || process.env.ADDON_URL || await ask("Addon URL: (https://www.construct.net/en/make-games/addons/1057/testing-auto-release)");
   const filename = options.filename || process.env.UPLOAD_FILE || await ask("File to upload: (./my-addon.c3addon)");
-  const username = options.username || process.env.USERNAME || await ask("Username:");
-  const password = options.password || process.env.PASSWORD || await ask("Password:", "password");
   const releaseNotes = options.releaseNotes || process.env.RELEASE_NOTES || "Released via c3addon-publish (https://npmjs.com/package/c3addon)";
 
-  if (!addonUrl) throw new Error(`Please provide an Addon URL (received ${addonUrl})`);
   if (!filename) throw new Error(`Please provide a file to upload (received ${filename})`);
-  if (!username) throw new Error(`Please provide an auth user (received ${username})`);
-  if (!password) throw new Error(`Please provide an auth password (received ${password})`);
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-  });
-  const page = await browser.newPage();
-
-  // fake user agent
-  page.setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.103 Safari/537.36");
-
-  // first, login.
-  console.log("Logging in...");
-  await page.goto("https://www.construct.net/en/login");
-  await page.type("#Username", username);
-  await page.type("#Password", password);
-  await Promise.all([
-    page.waitForNavigation(),
-    page.click("#BtnLogin")
-  ]);
-
-  // try to check for auth errors.
-  try {
-    const authError = await page.$eval("#AuthErrorWrapper", el => el.textContent);
-    if (authError) {
-      console.error("Authentication error:", authError.trim());
-      process.exit(1);
-    }
-  } catch (e) {}
-
-  // parse the addon URL.
-  const addon = parseAddonURL(addonUrl);
-  if (!addon) { throw new Error(`Invalid addon URL: ${addonUrl} (expected https://www.construct.net/[LANG]/make-games/addons/[ADDON-ID]/[ADDON-NAME])`); }
-
-  // navigate to the addon releases page.
-  const releasesUrl = `https://www.construct.net/${addon.lang}/make-games/addons/${addon.addonId}/${addon.addonName}/edit/releases`;
-  console.log(`Navigating to addon URL... (${releasesUrl})`);
-
-  const response = await page.goto(releasesUrl, { waitUntil: 'domcontentloaded' });
-  if (response?.status() !== 200) {
-    console.error(`Failed to navigate to ${releasesUrl} (status ${response?.status()})`);
-    process.exit(1);
-  }
+  const { browser, page } = await openSession(options);
 
   // create a new release.
   await Promise.all([
@@ -121,30 +75,40 @@ export async function publish(options: PublishOptions = {}) {
   ])
 
   // publish the release.
+  const publishButton = await page.waitForSelector("#BtnPublishRelease", {
+    timeout: 30000,
+  }).catch(() => null);
+
+  if (!publishButton) {
+    console.error("Error: the release was uploaded but the publish button never appeared.");
+    console.error(`Finish it by hand at ${page.url()}`);
+    process.exit(1);
+  }
+
   await Promise.all([
     page.waitForNavigation(),
-    page.click("#BtnPublishRelease"),
+    publishButton.click(),
   ]);
 
   // wait for "This release is now published!" to appear
-  await page.waitForSelector('.notification.success', { timeout: 10000 });
+  const published = await page
+    .waitForSelector('.notification.success', { timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!published) {
+    const stillOffered = await page.$("#BtnPublishRelease");
+
+    if (stillOffered) {
+      console.error("Error: the publish did not take effect - the release is still unpublished.");
+      console.error(`Finish it by hand at ${page.url()}`);
+      await browser.close();
+      process.exit(1);
+    }
+
+    console.warn("Published, but the confirmation banner did not appear.");
+  }
 
   // close the browser!
   await browser.close();
-}
-
-
-export function parseAddonURL(url: string) {
-  // ensure addon URL ends with a slash.
-  if (!url.endsWith("/")) url += "/";
-
-  const pattern = /\/([a-z]+)\/make-games\/addons\/([0-9]+)\/([^\s/]+)\//;
-
-  const match = url.match(pattern);
-  if (match) {
-    const [, lang, addonId, addonName] = match;
-    return { lang, addonId, addonName };
-  }
-
-  return null;
 }
