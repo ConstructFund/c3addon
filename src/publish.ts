@@ -1,8 +1,14 @@
 import fs from "node:fs";
+import { Page } from "puppeteer";
 
 import { ask } from './utils';
 import { pack } from "./pack";
 import { openSession, parseAddonURL } from "./session";
+import { readAddonVersion } from "./addonFile";
+import { scrapeReleases, planRelease } from "./releases";
+
+// parseAddonURL used to live here; keep it reachable from this module.
+export { parseAddonURL };
 
 export interface PublishOptions {
   addonUrl?: string,
@@ -12,69 +18,67 @@ export interface PublishOptions {
   releaseNotes?: string,
 }
 
-export async function publish(options: PublishOptions = {}) {
-  // if the filename is a directory, pack it first.
-  const isDir = fs.lstatSync(options.filename!).isDirectory();
-  if (isDir) {
-    console.log("Packing directory...");
-    const packedFile = await pack(options.filename!);
-    options.filename = packedFile;
-  }
-
-  const filename = options.filename || process.env.UPLOAD_FILE || await ask("File to upload: (./my-addon.c3addon)");
-  const releaseNotes = options.releaseNotes || process.env.RELEASE_NOTES || "Released via c3addon-publish (https://npmjs.com/package/c3addon)";
-
-  if (!filename) throw new Error(`Please provide a file to upload (received ${filename})`);
-
-  const { browser, page } = await openSession(options);
-
-  // create a new release.
-  await Promise.all([
-    page.waitForNavigation(),
-    page.click('#BtnCreateRelease'),
-  ]);
-
-  // upload the file.
+/**
+ * Put the file on a release that is already open in the browser.
+ *
+ * Used both for a release just created and for one picked up from the list, as
+ * the edit page is the same either way.
+ */
+async function uploadFile(page: Page, filename: string) {
   await page.click("#UploadReleaseButton");
 
   // the dialog holding the file input is only built on click.
   const fileInput = await page.waitForSelector("input[type=file]").catch(() => null);
-  if (fileInput) {
-    await fileInput.uploadFile(filename);
-    // submit the upload.
-    console.info(`Uploading file ${filename}...`);
+  if (!fileInput) throw new Error("failed to find file input");
 
-    try {
-      await Promise.all([
-        page.waitForNavigation(),
-        page.click('.ui-dialog .ui-dialog-buttonset button:last-child')
-      ]);
+  await fileInput.uploadFile(filename);
 
-    } catch (e) {
-      // try to check for upload errors
-      const uploadError = await page.$eval("#AddonReleaseUploadFileControl_MessageLabel", el => el.textContent).catch(() => null);
-      if (uploadError && uploadError.trim()) {
-        console.error("Error:", uploadError.trim());
-        process.exit(1);
-      } else {
-        throw e;
-      }
+  // submit the upload.
+  console.info(`Uploading file ${filename}...`);
+
+  try {
+    await Promise.all([
+      page.waitForNavigation(),
+      page.click('.ui-dialog .ui-dialog-buttonset button:last-child')
+    ]);
+
+  } catch (e) {
+    // try to check for upload errors
+    const uploadError = await page.$eval("#AddonReleaseUploadFileControl_MessageLabel", el => el.textContent).catch(() => null);
+    if (uploadError && uploadError.trim()) {
+      console.error("Error:", uploadError.trim());
+      process.exit(1);
+    } else {
+      throw e;
     }
-
-  } else {
-    throw new Error("failed to find file input");
   }
+}
 
-  // update the release notes.
+async function updateReleaseNotes(page: Page, releaseNotes: string) {
   console.log("Updating release notes...");
   await page.waitForSelector("#RichContent");
+
+  // The field keeps whatever was there before, so it has to be emptied first
+  // or a reused release ends up with two sets of notes run together.
+  await page.$eval("#RichContent", (el) => {
+    (el as HTMLInputElement | HTMLTextAreaElement).value = "";
+  }).catch(() => {});
+
   await page.type("#RichContent", releaseNotes);
   await Promise.all([
     page.waitForNavigation(),
     page.click("#BtnUpdateRelease"),
   ])
+}
 
-  // publish the release.
+async function publishRelease(page: Page) {
+  // Waiting for the button rather than going straight to page.click matters:
+  // click() is a one-shot query followed by a mouse event at the coordinates
+  // it found. Run while the page from the update above is still settling, it
+  // can measure the old document and dispatch into the new one, which clicks
+  // nothing at all and reports no error. The navigation started alongside it
+  // then resolves on the update's own navigation, so the whole step looks like
+  // it worked and the release is quietly left unpublished.
   const publishButton = await page.waitForSelector("#BtnPublishRelease", {
     timeout: 30000,
   }).catch(() => null);
@@ -96,19 +100,69 @@ export async function publish(options: PublishOptions = {}) {
     .then(() => true)
     .catch(() => false);
 
-  if (!published) {
-    const stillOffered = await page.$("#BtnPublishRelease");
+  if (published) return;
 
-    if (stillOffered) {
-      console.error("Error: the publish did not take effect - the release is still unpublished.");
-      console.error(`Finish it by hand at ${page.url()}`);
-      await browser.close();
-      process.exit(1);
-    }
+  // The banner is only a confirmation, and its markup is not ours. What
+  // settles it is the button: a published release does not offer to publish
+  // itself again, so if it is still there, nothing was published.
+  const stillOffered = await page.$("#BtnPublishRelease");
 
-    console.warn("Published, but the confirmation banner did not appear.");
+  if (stillOffered) {
+    console.error("Error: the publish did not take effect - the release is still unpublished.");
+    console.error(`Finish it by hand at ${page.url()}`);
+    process.exit(1);
   }
 
-  // close the browser!
-  await browser.close();
+  console.warn("Published, but the confirmation banner did not appear.");
+}
+
+export async function publish(options: PublishOptions = {}) {
+  // if the filename is a directory, pack it first.
+  const isDir = fs.lstatSync(options.filename!).isDirectory();
+  if (isDir) {
+    console.log("Packing directory...");
+    const packedFile = await pack(options.filename!);
+    options.filename = packedFile;
+  }
+
+  const filename = options.filename || process.env.UPLOAD_FILE || await ask("File to upload: (./my-addon.c3addon)");
+  const releaseNotes = options.releaseNotes || process.env.RELEASE_NOTES || "Released via c3addon-publish (https://npmjs.com/package/c3addon)";
+
+  if (!filename) throw new Error(`Please provide a file to upload (received ${filename})`);
+
+  const version = await readAddonVersion(filename);
+  const { browser, page } = await openSession(options);
+
+  try {
+    const plan = planRelease(await scrapeReleases(page), version);
+
+    if (plan.kind === "already-published") {
+      // The file cannot be swapped on a published release, so there is nothing
+      // to change and nothing to fix. Leave the notes alone and call it done.
+      console.log(`Version ${version} is already published. Nothing to do.`);
+      return;
+    }
+
+    if (plan.kind === "create") {
+      await Promise.all([
+        page.waitForNavigation(),
+        page.click('#BtnCreateRelease'),
+      ]);
+
+    } else {
+      const what = plan.kind === "reuse"
+        ? `the unpublished release for ${version}`
+        : "an empty release that was left behind";
+      console.log(`Reusing ${what} (${plan.release.url})`);
+
+      await page.goto(plan.release.url, { waitUntil: "domcontentloaded" });
+    }
+
+    await uploadFile(page, filename);
+    await updateReleaseNotes(page, releaseNotes);
+    await publishRelease(page);
+
+  } finally {
+    await browser.close();
+  }
 }

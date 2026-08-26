@@ -136,3 +136,43 @@ export function formatRelease(release: Release) {
     release.filename || "-",
   ].join("  ");
 }
+
+/** What publishing should do about the releases that are already there. */
+export type ReleasePlan =
+  /** This exact version is already out. Nothing to do. */
+  | { kind: "already-published"; release: Release }
+  /** This exact version is there but unpublished: fill it in and publish it. */
+  | { kind: "reuse"; release: Release }
+  /** A blank release is waiting to be used, so use it instead of making another. */
+  | { kind: "empty"; release: Release }
+  /** Nothing suitable. Make a new one. */
+  | { kind: "create" };
+
+/**
+ * Pick what to do, given the releases already on the page.
+ *
+ * Matching the version first matters: a re-run after a failed publish should
+ * finish the release it already made rather than start a second one for the
+ * same version. Blank releases are the leftovers of exactly those failures -
+ * clicking Create is the first thing publishing does, so an interrupted run
+ * leaves one behind - and reusing them keeps the list from filling up.
+ */
+export function planRelease(releases: Release[], version: string): ReleasePlan {
+  const live = releases.filter((r) => !r.isDeleted);
+
+  if (version) {
+    const same = live.find((r) => r.version === version);
+    if (same) {
+      return same.isPublished
+        ? { kind: "already-published", release: same }
+        : { kind: "reuse", release: same };
+    }
+  }
+
+  const blank = live.find(
+    (r) => !r.isPublished && !r.isBeta && r.version === "" && r.filename === ""
+  );
+  if (blank) return { kind: "empty", release: blank };
+
+  return { kind: "create" };
+}
