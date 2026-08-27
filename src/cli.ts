@@ -22,6 +22,8 @@ program.command('publish')
   .option('--username <string>', 'Username to login with')
   .option('--password <string>', 'Password to login with')
   .option('--release-notes <string>', 'Release notes to include with the upload')
+  .option('--headful', 'Show the browser window instead of running headless')
+  .option('--slow-mo <ms>', 'Slow each interaction down by this many ms (implies you want to watch it)', parseFloat)
   .action((filename, options) => {
     options.filename = filename;
     publish(options);
@@ -34,6 +36,8 @@ program.command('releases')
   .option('--password <string>', 'Password to login with')
   .option('--latest', 'Print only the highest published version')
   .option('--json', 'Print the full records as JSON')
+  .option('--headful', 'Show the browser window instead of running headless')
+  .option('--slow-mo <ms>', 'Slow each interaction down by this many ms (implies you want to watch it)', parseFloat)
   .action(async (options) => {
     const releases = await getReleases(options);
 

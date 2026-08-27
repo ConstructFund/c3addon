@@ -6,6 +6,8 @@ export interface AuthOptions {
   addonUrl?: string;
   username?: string;
   password?: string;
+  headful?: boolean;
+  slowMo?: number;
 }
 
 export interface Addon {
@@ -58,14 +60,18 @@ export async function openSession(options: AuthOptions = {}): Promise<Session> {
   if (!username) throw new Error(`Please provide an auth user (received ${username})`);
   if (!password) throw new Error(`Please provide an auth password (received ${password})`);
 
+  const headful = options.headful ?? process.env.C3ADDON_HEADFUL === "true";
+  const slowMo = options.slowMo ?? Number(process.env.C3ADDON_SLOWMO || 0);
+
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: !headful,
+    slowMo,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
   });
   const page = await browser.newPage();
 
   // fake user agent
-  page.setUserAgent(
+  await page.setUserAgent(
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.103 Safari/537.36"
   );
 

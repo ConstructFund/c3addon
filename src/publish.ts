@@ -116,66 +116,70 @@ async function updateReleaseNotes(page: Page, releaseNotes: string) {
 }
 
 async function publishRelease(page: Page, releasesUrl: string, version: string) {
-  // Waiting for the button rather than going straight to page.click matters:
-  // click() is a one-shot query followed by a mouse event at the coordinates
-  // it found. Run while the page from the update above is still settling, it
-  // can measure the old document and dispatch into the new one, which clicks
-  // nothing at all and reports no error. The navigation started alongside it
-  // then resolves on the update's own navigation, so the whole step looks like
-  // it worked and the release is quietly left unpublished.
-  const publishButton = await page.waitForSelector("#BtnPublishRelease", {
-    timeout: 30000,
-  }).catch(() => null);
-
-  if (!publishButton) {
-    console.error("Error: the release was uploaded but the publish button never appeared.");
-    console.error(`Finish it by hand at ${page.url()}`);
-    process.exit(1);
-  }
-
-  await Promise.all([
-    page.waitForNavigation(),
-    publishButton.click(),
-  ]);
-
-  // wait for "This release is now published!" to appear
-  const published = await page
-    .waitForSelector('.notification.success', { timeout: 10000 })
-    .then(() => true)
-    .catch(() => false);
-
-  if (published) return;
-
-  // The banner is only a confirmation and its markup is not ours to depend on.
-  // The release list is the actual record, so go and read it rather than guess
-  // from what the edit page happens to still be showing.
   const editUrl = page.url();
+  const ATTEMPTS = 4;
 
-  if (version) {
-    await page.goto(releasesUrl, { waitUntil: "domcontentloaded" });
-    const ours = (await scrapeReleases(page)).find(
-      (r) => r.version === version && !r.isDeleted
-    );
+  for (let attempt = 1; attempt <= ATTEMPTS; ++attempt) {
+    if (attempt > 1) {
+      console.log(`Publish did not take effect; retrying (${attempt}/${ATTEMPTS})...`);
+      await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+      await page.goto(editUrl, { waitUntil: "domcontentloaded" });
+    }
 
-    if (ours?.isPublished) {
-      console.warn("Published. (The confirmation banner did not appear, so this was read back from the release list.)");
+    const publishButton = await page.waitForSelector("#BtnPublishRelease", {
+      timeout: 30000,
+    }).catch(() => null);
+
+    if (!publishButton) {
+      if (await isPublished(page, releasesUrl, version)) {
+        console.log("Published.");
+        return;
+      }
+      if (attempt === 1 && !version) {
+        break;
+      }
+      continue;
+    }
+
+    await publishButton.click();
+
+    const published = await page
+      .waitForSelector(".notification.success", { timeout: 10000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (published) {
+      console.log("Published.");
       return;
     }
 
-    console.error(`Error: ${version} is still not published.`);
-    console.error(`Finish it by hand at ${editUrl}`);
-    process.exit(1);
+    if (await isPublished(page, releasesUrl, version)) {
+      console.log("Published. (Read back from the release list; the confirmation banner did not appear.)");
+      return;
+    }
   }
 
-  // Without a version to look for, the best that is left is whether the page
-  // is still offering to publish.
-  if (await page.$("#BtnPublishRelease")) {
-    console.error("Error: the publish did not take effect - the release is still unpublished.");
-    console.error(`Finish it by hand at ${editUrl}`);
-    process.exit(1);
-  }
+  console.error(`Error: ${version || "the release"} is still not published after ${ATTEMPTS} attempts.`);
+  console.error(`Finish it by hand at ${editUrl}`);
+  process.exit(1);
+}
 
-  console.warn("Published, but the confirmation banner did not appear.");
+/**
+ * Whether the release for this version is published, according to the list.
+ *
+ * Returns false when there is no version to match on: the caller has nothing
+ * to identify the release by, and guessing in the optimistic direction is what
+ * made this silent in the first place. Leaves the browser on the release list.
+ */
+async function isPublished(page: Page, releasesUrl: string, version: string) {
+  if (!version) return false;
+
+  await page.goto(releasesUrl, { waitUntil: "domcontentloaded" });
+  const ours = (await scrapeReleases(page)).find(
+    (r) => r.version === version && !r.isDeleted
+  );
+
+  return Boolean(ours?.isPublished);
 }
 
 export async function publish(options: PublishOptions = {}) {

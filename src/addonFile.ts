@@ -12,7 +12,7 @@ import * as ZipLib from "zip-lib";
  * same place it does.
  */
 export async function readAddonVersion(file: string): Promise<string> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "c3addon-"));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "c3addon-")));
 
   try {
     await ZipLib.extract(file, dir);
