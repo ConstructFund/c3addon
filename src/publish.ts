@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { Page } from "puppeteer";
+import { Dialog, Page } from "puppeteer";
 
 import { ask } from './utils';
 import { pack } from "./pack";
@@ -24,8 +24,39 @@ export interface PublishOptions {
  * Used both for a release just created and for one picked up from the list, as
  * the edit page is the same either way.
  */
+/**
+ * Take the file off a release that already has one.
+ *
+ * A release holding a file offers Delete where an empty one offers Upload, so
+ * the file cannot simply be replaced. The Delete goes through a native
+ * confirm(), and puppeteer blocks on a dialog nobody answers - so the handler
+ * has to be attached before the click, not after.
+ */
+async function removeExistingUpload(page: Page) {
+  const deleteButton = await page.$("#DeleteReleaseUpload");
+  if (!deleteButton) return;
+
+  console.log("Removing the file already on this release...");
+
+  const accept = (dialog: Dialog) => dialog.accept();
+  page.on("dialog", accept);
+
+  try {
+    await Promise.all([page.waitForNavigation(), deleteButton.click()]);
+  } finally {
+    page.off("dialog", accept);
+  }
+}
+
 async function uploadFile(page: Page, filename: string) {
-  await page.click("#UploadReleaseButton");
+  await removeExistingUpload(page);
+
+  const uploadButton = await page
+    .waitForSelector("#UploadReleaseButton", { timeout: 30000 })
+    .catch(() => null);
+
+  if (!uploadButton) throw new Error("failed to find the upload button");
+  await uploadButton.click();
 
   // the dialog holding the file input is only built on click.
   const fileInput = await page.waitForSelector("input[type=file]").catch(() => null);
@@ -64,6 +95,19 @@ async function updateReleaseNotes(page: Page, releaseNotes: string) {
     (el as HTMLInputElement | HTMLTextAreaElement).value = "";
   }).catch(() => {});
 
+  // The field caps what it will hold, and typing past it is simply ignored -
+  // silently, and only on the site. Say so rather than shipping notes that end
+  // mid-sentence.
+  const maxLength = await page
+    .$eval("#RichContent", (el) => Number(el.getAttribute("maxlength")) || 0)
+    .catch(() => 0);
+
+  if (maxLength && releaseNotes.length > maxLength) {
+    console.warn(
+      `Release notes are ${releaseNotes.length} characters and the field holds ${maxLength}; the rest will be dropped.`
+    );
+  }
+
   await page.type("#RichContent", releaseNotes);
   await Promise.all([
     page.waitForNavigation(),
@@ -71,7 +115,7 @@ async function updateReleaseNotes(page: Page, releaseNotes: string) {
   ])
 }
 
-async function publishRelease(page: Page) {
+async function publishRelease(page: Page, releasesUrl: string, version: string) {
   // Waiting for the button rather than going straight to page.click matters:
   // click() is a one-shot query followed by a mouse event at the coordinates
   // it found. Run while the page from the update above is still settling, it
@@ -102,14 +146,32 @@ async function publishRelease(page: Page) {
 
   if (published) return;
 
-  // The banner is only a confirmation, and its markup is not ours. What
-  // settles it is the button: a published release does not offer to publish
-  // itself again, so if it is still there, nothing was published.
-  const stillOffered = await page.$("#BtnPublishRelease");
+  // The banner is only a confirmation and its markup is not ours to depend on.
+  // The release list is the actual record, so go and read it rather than guess
+  // from what the edit page happens to still be showing.
+  const editUrl = page.url();
 
-  if (stillOffered) {
+  if (version) {
+    await page.goto(releasesUrl, { waitUntil: "domcontentloaded" });
+    const ours = (await scrapeReleases(page)).find(
+      (r) => r.version === version && !r.isDeleted
+    );
+
+    if (ours?.isPublished) {
+      console.warn("Published. (The confirmation banner did not appear, so this was read back from the release list.)");
+      return;
+    }
+
+    console.error(`Error: ${version} is still not published.`);
+    console.error(`Finish it by hand at ${editUrl}`);
+    process.exit(1);
+  }
+
+  // Without a version to look for, the best that is left is whether the page
+  // is still offering to publish.
+  if (await page.$("#BtnPublishRelease")) {
     console.error("Error: the publish did not take effect - the release is still unpublished.");
-    console.error(`Finish it by hand at ${page.url()}`);
+    console.error(`Finish it by hand at ${editUrl}`);
     process.exit(1);
   }
 
@@ -131,7 +193,7 @@ export async function publish(options: PublishOptions = {}) {
   if (!filename) throw new Error(`Please provide a file to upload (received ${filename})`);
 
   const version = await readAddonVersion(filename);
-  const { browser, page } = await openSession(options);
+  const { browser, page, releasesUrl } = await openSession(options);
 
   try {
     const plan = planRelease(await scrapeReleases(page), version);
@@ -160,7 +222,7 @@ export async function publish(options: PublishOptions = {}) {
 
     await uploadFile(page, filename);
     await updateReleaseNotes(page, releaseNotes);
-    await publishRelease(page);
+    await publishRelease(page, releasesUrl, version);
 
   } finally {
     await browser.close();
